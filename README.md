@@ -1,0 +1,108 @@
+flowchart TD
+    %% ================= 样式定义 =================
+    classDef process fill:#e1f5fe,stroke:#01579b,stroke-width:2px,color:#000,rx:8,ry:8
+    classDef data fill:#e8f5e9,stroke:#2e7d32,stroke-width:2px,color:#000,rx:8,ry:8
+    classDef model fill:#f3e5f5,stroke:#4a148c,stroke-width:2px,color:#000,rx:8,ry:8
+    classDef decision fill:#fff3e0,stroke:#e65100,stroke-width:2px,color:#000
+    classDef output fill:#ffebee,stroke:#b71c1c,stroke-width:2px,color:#000
+    classDef startend fill:#eceff1,stroke:#37474f,stroke-width:3px,color:#000,rx:20,ry:20
+
+    Start([🚀 开始]) ::: startend --> Setup
+
+    %% ================= 1. 初始化配置 =================
+    subgraph Setup [1. 初始化与配置阶段]
+        direction TB
+        SetPaths[(📂 设置数据路径<br>SMAP, AUX, ERA5)] ::: data
+        InitDevice[💻 初始化设备: CPU/GPU] ::: process
+        InitModel[🧠 定义模型: SM_Expert_FusionNet] ::: model
+        InitLoss[⚖️ 定义损失: PhysicsGuidedLoss] ::: model
+        InitOptim[⚙️ 定义优化器: Adam] ::: model
+        
+        SetPaths --> InitDevice --> InitModel --> InitLoss --> InitOptim
+    end
+
+    InitOptim --> LoadSMAP
+
+    %% ================= 2. 遥感与辅助数据 =================
+    subgraph GEE_Process [2. SMAP与辅助数据提取]
+        direction TB
+        LoadSMAP[📥 调用 load_gee_geo_tiff_data] ::: process
+        ReadSMAP[🗺️ 读取 9km SMAP GeoTIFF] ::: data
+        ReadAux[🗺️ 读取 1km 辅助数据<br>DEM, NDVI, LST, 掩膜] ::: data
+        AlignAux[📐 强制对齐 1km 尺寸为 9km×9<br>中心裁剪或填充] ::: process
+        ComputeNorm[🧮 基于陆地掩膜计算归一化参数<br>均值、标准差] ::: process
+        NormalizeAux[🔄 归一化辅助数据] ::: process
+        OutputGEE[/📤 输出: sm_low, aux_high,<br>land_mask, norm_params/] ::: output
+
+        LoadSMAP --> ReadSMAP --> ReadAux --> AlignAux --> ComputeNorm --> NormalizeAux --> OutputGEE
+    end
+
+    OutputGEE --> LoadERA5
+
+    %% ================= 3. 物理先验数据 =================
+    subgraph ERA5_Process [3. ERA5 物理先验数据处理]
+        direction TB
+        LoadERA5[📥 调用 load_era5_land_sm_data_9km] ::: process
+        ReadERA5[🗺️ 读取 9km ERA5-Land GeoTIFF] ::: data
+        AlignERA5[📐 对齐至 SMAP 9km 尺寸] ::: process
+        GenERA5Mask[🛡️ 生成 9km 有效掩膜] ::: process
+        UpsampleERA5[⬆️ 上采样到 1km<br>双线性(数据) / 最近邻(掩膜)] ::: process
+        ApplyLandMask[🗺️ 应用陆地掩膜] ::: process
+        OutputERA5[/📤 输出: era5_sm_1km,<br>era5_valid_mask_1km/] ::: output
+
+        LoadERA5 --> ReadERA5 --> AlignERA5 --> GenERA5Mask --> UpsampleERA5 --> ApplyLandMask --> OutputERA5
+    end
+
+    OutputERA5 --> GenWeakLabel
+
+    %% ================= 4. 弱标签生成 =================
+    subgraph WeakLabel_Gen [4. 混合弱标签生成]
+        direction TB
+        GenWeakLabel[🧬 生成混合弱标签] ::: process
+        UpsampleSMAP[⬆️ F.interpolate: 上采样 SMAP 到 1km] ::: process
+        MaskSMAP[🛡️ 乘以掩膜得到 sm_upsampled] ::: process
+        Where[🔀 条件融合 torch.where<br>ERA5有效则取ERA5，否则取SMAP] ::: process
+        OutputWeak[/📤 输出: sm_weak_label/] ::: output
+        PrintStats[📊 打印统计: ERA5与SMAP占比] ::: process
+
+        GenWeakLabel --> UpsampleSMAP --> MaskSMAP --> Where --> OutputWeak --> PrintStats
+    end
+
+    PrintStats --> TrainLoop
+
+    %% ================= 5. 核心训练循环 =================
+    subgraph Training [5. 模型训练阶段]
+        direction TB
+        TrainLoop((⏳ Epoch 循环开始)) ::: process
+        Forward[➡️ 前向传播<br>pred = model(...)] ::: model
+        ComputeLoss[📉 计算损失<br>total_loss = criterion(...)] ::: model
+        Backward[🔙 反向传播与 Adam 优化] ::: process
+        CheckEpoch{🔍 是否每 5 个 Epoch?} ::: decision
+        PrintLoss[🖨️ 打印损失详情] ::: process
+        CheckDone{🏁 完成所有 Epoch?} ::: decision
+        TrainDone((✅ 训练跳出)) ::: process
+
+        TrainLoop --> Forward --> ComputeLoss --> Backward --> CheckEpoch
+        CheckEpoch -- 是 --> PrintLoss --> CheckDone
+        CheckEpoch -- 否 --> CheckDone
+        CheckDone -- 否 -.-> |继续下一轮| TrainLoop
+        CheckDone -- 是 --> TrainDone
+    end
+
+    TrainDone --> Eval
+
+    %% ================= 6. 评估与导出 =================
+    subgraph Evaluation [6. 评估与结果导出]
+        direction TB
+        Eval[🧪 模型切换为评估模式] ::: process
+        FinalPred[🔮 最终预测: final_pred = model(...)] ::: model
+        ComputeMetrics[📈 计算科学指标<br>RMSE, 空间相关系数] ::: process
+        PrintMetrics[🖨️ 打印评价结果] ::: process
+        Export[💾 导出流程: export_sm_to_geotiff] ::: process
+        Denorm[🔓 反归一化、掩膜应用、截断到 0~0.4] ::: process
+        SaveTIFF[(💾 写入硬盘: 最终 GeoTIFF 文件)] ::: data
+
+        Eval --> FinalPred --> ComputeMetrics --> PrintMetrics --> Export --> Denorm --> SaveTIFF
+    end
+
+    SaveTIFF --> End([🎉 结束]) ::: startend
