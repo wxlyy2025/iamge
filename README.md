@@ -1,108 +1,89 @@
-flowchart TD
-    %% ================= 样式定义 =================
-    classDef process fill:#e1f5fe,stroke:#01579b,stroke-width:2px,color:#000,rx:8,ry:8
-    classDef data fill:#e8f5e9,stroke:#2e7d32,stroke-width:2px,color:#000,rx:8,ry:8
-    classDef model fill:#f3e5f5,stroke:#4a148c,stroke-width:2px,color:#000,rx:8,ry:8
-    classDef decision fill:#fff3e0,stroke:#e65100,stroke-width:2px,color:#000
-    classDef output fill:#ffebee,stroke:#b71c1c,stroke-width:2px,color:#000
-    classDef startend fill:#eceff1,stroke:#37474f,stroke-width:3px,color:#000,rx:20,ry:20
+# Mineral Prospect Model 
 
-    Start([🚀 开始]) ::: startend --> Setup
+这是一个用于矿产远景预测/反演的多模型版本。输入为多源找矿证据图层，输出为每个像元的成矿远景概率图。
 
-    %% ================= 1. 初始化配置 =================
-    subgraph Setup [1. 初始化与配置阶段]
-        direction TB
-        SetPaths[(📂 设置数据路径<br>SMAP, AUX, ERA5)] ::: data
-        InitDevice[💻 初始化设备: CPU/GPU] ::: process
-        InitModel[🧠 定义模型: SM_Expert_FusionNet] ::: model
-        InitLoss[⚖️ 定义损失: PhysicsGuidedLoss] ::: model
-        InitOptim[⚙️ 定义优化器: Adam] ::: model
-        
-        SetPaths --> InitDevice --> InitModel --> InitLoss --> InitOptim
-    end
+## 可选模型
 
-    InitOptim --> LoadSMAP
+训练时通过 `--model` 选择网络：
 
-    %% ================= 2. 遥感与辅助数据 =================
-    subgraph GEE_Process [2. SMAP与辅助数据提取]
-        direction TB
-        LoadSMAP[📥 调用 load_gee_geo_tiff_data] ::: process
-        ReadSMAP[🗺️ 读取 9km SMAP GeoTIFF] ::: data
-        ReadAux[🗺️ 读取 1km 辅助数据<br>DEM, NDVI, LST, 掩膜] ::: data
-        AlignAux[📐 强制对齐 1km 尺寸为 9km×9<br>中心裁剪或填充] ::: process
-        ComputeNorm[🧮 基于陆地掩膜计算归一化参数<br>均值、标准差] ::: process
-        NormalizeAux[🔄 归一化辅助数据] ::: process
-        OutputGEE[/📤 输出: sm_low, aux_high,<br>land_mask, norm_params/] ::: output
+| 参数 | 说明 |
+|---|---|
+| `unet` | 基础 U-Net，适合小数据和快速基线。 |
+| `resunet` | 轻量残差 U-Net，适合多源证据层。 |
+| `resnet50_unet` | 本地实现的 ResNet-50 Bottleneck 编码器 + U-Net 解码器。 |
+| `attention_unet` | 带注意力门的 U-Net，更关注矿点相关空间区域。 |
+| `aspp_resunet` | ResUNet + DeepLab 风格 ASPP，多尺度上下文更强。 |
+| `simple_cnn` | 轻量 CNN 基线，速度快，适合对照实验。 |
 
-        LoadSMAP --> ReadSMAP --> ReadAux --> AlignAux --> ComputeNorm --> NormalizeAux --> OutputGEE
-    end
+训练模式：
 
-    OutputGEE --> LoadERA5
+```powershell
+--training-mode gan          # 生成器/反演网络 + PatchGAN 判别器
+--training-mode supervised   # 只使用监督损失训练反演网络
+```
 
-    %% ================= 3. 物理先验数据 =================
-    subgraph ERA5_Process [3. ERA5 物理先验数据处理]
-        direction TB
-        LoadERA5[📥 调用 load_era5_land_sm_data_9km] ::: process
-        ReadERA5[🗺️ 读取 9km ERA5-Land GeoTIFF] ::: data
-        AlignERA5[📐 对齐至 SMAP 9km 尺寸] ::: process
-        GenERA5Mask[🛡️ 生成 9km 有效掩膜] ::: process
-        UpsampleERA5[⬆️ 上采样到 1km<br>双线性(数据) / 最近邻(掩膜)] ::: process
-        ApplyLandMask[🗺️ 应用陆地掩膜] ::: process
-        OutputERA5[/📤 输出: era5_sm_1km,<br>era5_valid_mask_1km/] ::: output
+## 环境
 
-        LoadERA5 --> ReadERA5 --> AlignERA5 --> GenERA5Mask --> UpsampleERA5 --> ApplyLandMask --> OutputERA5
-    end
+你当前指定的 Python：
 
-    OutputERA5 --> GenWeakLabel
+```powershell
+D:\anaconda\envs\deep\python.exe
+```
 
-    %% ================= 4. 弱标签生成 =================
-    subgraph WeakLabel_Gen [4. 混合弱标签生成]
-        direction TB
-        GenWeakLabel[🧬 生成混合弱标签] ::: process
-        UpsampleSMAP[⬆️ F.interpolate: 上采样 SMAP 到 1km] ::: process
-        MaskSMAP[🛡️ 乘以掩膜得到 sm_upsampled] ::: process
-        Where[🔀 条件融合 torch.where<br>ERA5有效则取ERA5，否则取SMAP] ::: process
-        OutputWeak[/📤 输出: sm_weak_label/] ::: output
-        PrintStats[📊 打印统计: ERA5与SMAP占比] ::: process
+## 一键测试
 
-        GenWeakLabel --> UpsampleSMAP --> MaskSMAP --> Where --> OutputWeak --> PrintStats
-    end
+```powershell
+cd D:\data\PyTorch-GAN-master\MineralProspectModelZoo
+D:\anaconda\envs\deep\python.exe run_demo.py --python D:\anaconda\envs\deep\python.exe --model resnet50_unet --training-mode supervised
+```
 
-    PrintStats --> TrainLoop
+`resnet50_unet` 参数量较大，CPU 上建议先用 `supervised` 模式和较小 `base-channels` 跑通；正式训练再加大轮次。
 
-    %% ================= 5. 核心训练循环 =================
-    subgraph Training [5. 模型训练阶段]
-        direction TB
-        TrainLoop((⏳ Epoch 循环开始)) ::: process
-        Forward[➡️ 前向传播<br>pred = model(...)] ::: model
-        ComputeLoss[📉 计算损失<br>total_loss = criterion(...)] ::: model
-        Backward[🔙 反向传播与 Adam 优化] ::: process
-        CheckEpoch{🔍 是否每 5 个 Epoch?} ::: decision
-        PrintLoss[🖨️ 打印损失详情] ::: process
-        CheckDone{🏁 完成所有 Epoch?} ::: decision
-        TrainDone((✅ 训练跳出)) ::: process
+## 真实数据训练
 
-        TrainLoop --> Forward --> ComputeLoss --> Backward --> CheckEpoch
-        CheckEpoch -- 是 --> PrintLoss --> CheckDone
-        CheckEpoch -- 否 --> CheckDone
-        CheckDone -- 否 -.-> |继续下一轮| TrainLoop
-        CheckDone -- 是 --> TrainDone
-    end
+证据图层：
 
-    TrainDone --> Eval
+```text
+evidences.npy  shape = [C, H, W]
+```
 
-    %% ================= 6. 评估与导出 =================
-    subgraph Evaluation [6. 评估与结果导出]
-        direction TB
-        Eval[🧪 模型切换为评估模式] ::: process
-        FinalPred[🔮 最终预测: final_pred = model(...)] ::: model
-        ComputeMetrics[📈 计算科学指标<br>RMSE, 空间相关系数] ::: process
-        PrintMetrics[🖨️ 打印评价结果] ::: process
-        Export[💾 导出流程: export_sm_to_geotiff] ::: process
-        Denorm[🔓 反归一化、掩膜应用、截断到 0~0.4] ::: process
-        SaveTIFF[(💾 写入硬盘: 最终 GeoTIFF 文件)] ::: data
+矿点 CSV：
 
-        Eval --> FinalPred --> ComputeMetrics --> PrintMetrics --> Export --> Denorm --> SaveTIFF
-    end
+```csv
+row,col,deposit
+42,38,1
+88,90,1
+```
 
-    SaveTIFF --> End([🎉 结束]) ::: startend
+训练示例：
+
+```powershell
+D:\anaconda\envs\deep\python.exe train.py ^
+  --evidence D:\your_data\evidences.npy ^
+  --deposits D:\your_data\deposits.csv ^
+  --out-dir runs\yulong_resnet50 ^
+  --model resnet50_unet ^
+  --training-mode gan ^
+  --epochs 80 ^
+  --patch-size 64 ^
+  --samples-per-epoch 2048 ^
+  --batch-size 4 ^
+  --base-channels 16
+```
+
+预测：
+
+```powershell
+D:\anaconda\envs\deep\python.exe predict.py ^
+  --evidence D:\your_data\evidences.npy ^
+  --checkpoint runs\yulong_resnet50\checkpoint_final.pt ^
+  --out-dir runs\yulong_resnet50_prediction ^
+  --mc-samples 16
+```
+
+## 输出
+
+- `checkpoint_final.pt`：模型权重
+- `history.json`：训练损失
+- `prospectivity.npy/png`：矿产远景概率图
+- `uncertainty.npy/png`：多次随机前向预测的不确定性图
