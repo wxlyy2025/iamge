@@ -1,32 +1,32 @@
-# 数据配置
+# ==================== 数据配置 ====================
 data_path: './data/raw/mining_data.csv'
 random_state: 42
 
-# 数据分割配置
+# ==================== 数据分割配置 ====================
 test_size: 0.2
 val_size: 0.1
 
-# 类不平衡处理方法
+# ==================== 类不平衡处理配置 ====================
 # 可选: 'none', 'smote', 'under', 'smote_under'
 imbalance_method: 'smote_under'
 
-# 模型选择
+# ==================== 模型选择 ====================
 train_traditional_models: true
 train_deep_learning_models: true
 
-# 深度学习配置
+# ==================== 深度学习配置 ====================
 epochs: 100
 batch_size: 32
 learning_rate: 0.001
 dropout_rate: 0.3
 patience: 15
-pos_weight: 10  # 用于处理类不平衡的权重
+pos_weight: 10
 
-# 预测阈值
+# ==================== 预测配置 ====================
 prediction_threshold: 0.5
 
-# 输出配置
-results_dir: './results'
-models_dir: './results/models'
-plots_dir: './results/plots'
+# ==================== 输出配置 ====================
+output_dir: './results'
+model_dir: './results/models'
+plot_dir: './results/plots'
 metrics_dir: './results/metrics'

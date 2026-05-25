@@ -1,12 +1,12 @@
-"""矿点检测系统包"""
+"""矿点检测系统"""
+
+__version__ = '1.0.0'
+__author__ = 'Mining Detection Team'
 
 from .data_loader import MiningDataLoader
 from .models import MiningNN, MiningLSTM, TraditionalModels
 from .train import DeepLearningTrainer, TraditionalModelTrainer
 from .evaluate import ModelEvaluator
-
-__version__ = '1.0.0'
-__author__ = 'wxlyy2025'
 
 __all__ = [
     'MiningDataLoader',
@@ -15,5 +15,5 @@ __all__ = [
     'TraditionalModels',
     'DeepLearningTrainer',
     'TraditionalModelTrainer',
-    'ModelEvaluator',
+    'ModelEvaluator'
 ]
